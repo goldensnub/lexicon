@@ -20,7 +20,6 @@ export default function Index() {
 
   const loadWordOfTheDay = async () => {
     const today = new Date().toISOString().split("T")[0];
-
     try {
       // Check if we already have today's word
       const storedData = await AsyncStorage.getItem("wordOfTheDay");
@@ -32,50 +31,71 @@ export default function Index() {
           return;
         }
       }
-      
 
-      // Step 1: Get a random word
-      const wordRes = await axios.get<string[]>(
-        "https://random-word-api.herokuapp.com/word"
-      );
-      const word = wordRes.data[0];
-      console.log("Fetched word:", word);
+      let attempts = 0;
+      let found = false;
+      let word = "";
+      let phonetic = "";
+      let definition = "";
 
-      // Step 2: Get its definition
-      interface DictionaryApiMeaning {
-        partOfSpeech: string;
-        definitions: {
-          definition: string;
-          example?: string;
-          synonyms?: string[];
-          antonyms?: string[];
-        }[];
+      while (!found && attempts < 10) {
+        attempts++;
+        // Step 1: Get a random word
+        const wordRes = await axios.get<string[]>(
+          "https://random-word-api.herokuapp.com/word"
+        );
+        word = wordRes.data[0];
+        console.log(`Attempt ${attempts}: Fetched word - ${word}`);
+
+        try {
+          // Step 2: Get its definition
+          interface DictionaryApiMeaning {
+            partOfSpeech: string;
+            definitions: {
+              definition: string;
+              example?: string;
+              synonyms?: string[];
+              antonyms?: string[];
+            }[];
+          }
+
+          interface DictionaryApiResponse {
+            word: string;
+            phonetic: string;
+            meanings: DictionaryApiMeaning[];
+          }
+
+          const defRes = await axios.get<DictionaryApiResponse[]>(
+            `https://api.dictionaryapi.dev/api/v2/entries/en/${word}`
+          );
+          phonetic = defRes.data[0]?.phonetic || "";
+          definition =
+            defRes.data[0]?.meanings[0]?.definitions[0]?.definition ||
+            "No definition found.";
+          found = true;
+        } catch (err) {
+          // If the word doesn't exist, try again
+          console.error(`Attempt ${attempts}: Failed to fetch definition for ${word}`, err);
+          continue;
+        }
       }
 
-      interface DictionaryApiResponse {
-        word: string;
-        phonetic: string;
-        meanings: DictionaryApiMeaning[];
+      if (found) {
+        const newWordData: WordData = { word, phonetic, definition, date: today };
+        await AsyncStorage.setItem("wordOfTheDay", JSON.stringify(newWordData));
+        setWordData(newWordData);
+      } else {
+        // Fallback if no word found after max attempts
+        setWordData({
+          word: "Tuff",
+          phonetic: "/'tʌf",
+          definition: "To express compassion following an unfortunate event, e.g. the word of the day cannot be fetched.",
+          date: today,
+        });
       }
-
-
-      const defRes = await axios.get<DictionaryApiResponse[]>(
-        `https://api.dictionaryapi.dev/api/v2/entries/en/${word}`
-      );
-      const phonetic = defRes.data[0]?.phonetic;
-      
-      const definition =
-        defRes.data[0]?.meanings[0]?.definitions[0]?.definition ||
-        "No definition found.";
-
-      const newWordData: WordData = { word, phonetic, definition, date: today };
-
-      // Save to storage
-      await AsyncStorage.setItem("wordOfTheDay", JSON.stringify(newWordData));
-
-      setWordData(newWordData);
     } catch (error) {
       console.error("Error fetching word:", error);
+      setWordData(null);
     } finally {
       setLoading(false);
     }
