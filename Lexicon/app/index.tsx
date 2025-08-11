@@ -1,14 +1,18 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import {
   View,
   Text,
   Button,
   ActivityIndicator,
   StyleSheet,
+  Animated,
+  Dimensions,
 } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import axios from "axios";
+
+const { width: screenWidth } = Dimensions.get('window');
 
 interface WordData {
   word: string;
@@ -38,6 +42,12 @@ export default function Index() {
   const [loading, setLoading] = useState(true);
   const [meaningIndex, setMeaningIndex] = useState(0);
   const [definitionIndex, setDefinitionIndex] = useState(0);
+
+  //Animation values
+  const definitionTranslateX = useRef(new Animated.Value(0)).current;
+  const meaningTranslateY = useRef(new Animated.Value(0)).current;
+  const definitionOpacity = useRef(new Animated.Value(1)).current;
+  const meaningOpacity = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
     loadWordOfTheDay();
@@ -127,6 +137,117 @@ export default function Index() {
     }
   };
 
+  const animateDefinitionChange = (direction: "left" | "right") => {
+    const startX = direction === "left" ? screenWidth : -screenWidth;
+
+    if (!wordData?.meanings?.[meaningIndex]?.definitions) {
+      console.warn("Invalid word data, cannot animate definition change");
+      return;
+    }
+
+    Animated.parallel([
+      Animated.timing(definitionTranslateX, {
+        toValue: direction === "left" ? -screenWidth : screenWidth,
+        duration: 200,
+        useNativeDriver: true,
+      }),
+      Animated.timing(definitionOpacity, {
+        toValue: 0,
+        duration: 200,
+        useNativeDriver: true,
+      }),
+    ]).start(() => {
+      // Update the definition index
+      setDefinitionIndex((prev) => {
+        const currentMeaning = wordData?.meanings[meaningIndex];
+        if (!currentMeaning) return prev;
+        
+        if (direction === 'left') {
+          return prev < currentMeaning.definitions.length - 1 ? prev + 1 : prev;
+        } else {
+          return prev > 0 ? prev - 1 : prev;
+        }
+      });
+      
+      // Reset position for slide in
+      definitionTranslateX.setValue(startX);
+      
+      // Slide in new definition
+      Animated.parallel([
+        Animated.timing(definitionTranslateX, {
+          toValue: 0,
+          duration: 200,
+          useNativeDriver: true,
+        }),
+        Animated.timing(definitionOpacity, {
+          toValue: 1,
+          duration: 200,
+          useNativeDriver: true,
+        })
+      ]).start();
+    });
+  }
+
+  const animateMeaningChange = (direction: "up" | "down") => {
+    const startY = direction === "up" ? 50 : -50;
+
+    if (!wordData?.meanings?.[meaningIndex]) {
+      console.warn("Invalid word data, cannot animate definition change");
+      return;
+    }
+
+    Animated.parallel([
+      Animated.timing(meaningTranslateY, {
+        toValue: direction === "up" ? -50 : 50,
+        duration: 200,
+        useNativeDriver: true,
+      }),
+      Animated.timing(meaningOpacity, {
+        toValue: 0,
+        duration: 200,
+        useNativeDriver: true,
+      }),
+    ]).start(() => {
+      // Update the meaning index
+      setMeaningIndex((prev) => {
+        if (!wordData) return prev;
+
+        const newIndex =
+          direction === "up"
+            ? prev < wordData.meanings.length - 1
+              ? prev + 1
+              : prev
+            : prev > 0
+            ? prev - 1
+            : prev;
+
+        if (newIndex !== prev) {
+          setDefinitionIndex(0); // Reset definition index when meaning changes
+        }
+        return newIndex;
+      });
+
+      // Reset position for slide in
+      meaningTranslateY.setValue(startY);
+
+      // Slide in new meaning
+      Animated.parallel([
+        Animated.timing(meaningTranslateY, {
+          toValue: 0,
+          duration: 200,
+          useNativeDriver: true,
+        }),
+        Animated.timing(meaningOpacity, {
+          toValue: 1,
+          duration: 200,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    });
+  };
+
+  
+
   const swipeGesture = Gesture.Pan().onEnd((event) => {
     if (!wordData) return;
 
@@ -134,39 +255,21 @@ export default function Index() {
       if (event.translationY < 0) {
         // Swipe up
         console.log("Swiped up");
-        setMeaningIndex((prev) => {
-          const newIndex =
-            prev < wordData.meanings.length - 1 ? prev + 1 : prev;
-          if (newIndex !== prev) {
-            setDefinitionIndex(0); // Reset definition index when meaning changes
-          }
-          return newIndex;
-        });
+        animateMeaningChange("up");
       } else {
         // Swipe down
         console.log("Swiped down");
-        setMeaningIndex((prev) => {
-          const newIndex = prev > 0 ? prev - 1 : prev;
-          if (newIndex !== prev) {
-            setDefinitionIndex(0); // Reset definition index when meaning changes
-          }
-          return newIndex;
-        });
+        animateMeaningChange("down");
       }
     } else {
       if (event.translationX < 0) {
         // Swipe left
         console.log("Swiped left");
-        const currentMeaning = wordData.meanings[meaningIndex];
-        if (currentMeaning) {
-          setDefinitionIndex((prev) =>
-            prev < currentMeaning.definitions.length - 1 ? prev + 1 : prev
-          );
-        }
+        animateDefinitionChange("left");
       } else {
         // Swipe right
         console.log("Swiped right");
-        setDefinitionIndex((prev) => (prev > 0 ? prev - 1 : prev));
+        animateDefinitionChange("right");
       }
     }
   }).runOnJS(true);
@@ -237,16 +340,37 @@ export default function Index() {
       <GestureDetector gesture={swipeGesture}>
         <View style={styles.container}>
           <Text style={styles.word}>{wordData.word}</Text>
-          {wordData.phonetic && (<Text style={styles.phonetic}>{wordData.phonetic}</Text>)}
-          <Text style={styles.meaning}>
-            {wordData.meanings[meaningIndex]?.partOfSpeech || "Unknown"}
-          </Text>
-          {wordData && (
+          {wordData.phonetic && (
+            <Text style={styles.phonetic}>{wordData.phonetic}</Text>
+          )}
+          <Animated.View
+            style={[
+              styles.meaningContainer,
+              {
+                transform: [{ translateY: meaningTranslateY }],
+                opacity: meaningOpacity,
+              },
+            ]}
+          >
+            <Text style={styles.meaning}>
+              {wordData.meanings[meaningIndex]?.partOfSpeech || "Unknown"}
+            </Text>
+          </Animated.View>
+
+          <Animated.View
+            style={[
+              styles.definitionContainer,
+              {
+                transform: [{ translateX: definitionTranslateX }],
+                opacity: definitionOpacity,
+              },
+            ]}
+          >
             <Text style={styles.definition}>
               {wordData.meanings[meaningIndex]?.definitions[definitionIndex]
                 ?.definition || "No definition available."}
             </Text>
-          )}
+          </Animated.View>
           <Button
             title="Reset Storage"
             onPress={() => {
@@ -271,7 +395,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     padding: 20,
   },
-  word: { fontSize: 32, fontWeight: "bold", marginBottom: 10 },
+  word: { fontSize: 32, fontWeight: "bold", marginBottom: 7 },
   phonetic: {
     fontSize: 18,
     fontStyle: "italic",
@@ -280,4 +404,12 @@ const styles = StyleSheet.create({
   },
   meaning: { fontSize: 18, marginLeft: 10, color: "#888" },
   definition: { fontSize: 18, textAlign: "center" },
+  meaningContainer: {
+    marginBottom: 10,
+  },
+  definitionContainer: {
+    paddingHorizontal: 20,
+    minHeight: 100,
+    justifyContent: "center",
+  },
 });
